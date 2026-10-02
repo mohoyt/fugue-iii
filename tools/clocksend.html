@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Clock Send</title>
+<style>
+  :root {
+    --bg: #f6f5f2; --fg: #1d1d1b; --muted: #77756f; --line: #d9d6cf;
+    --accent: #e8a33d; --btn: #fff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161615; --fg: #ecebe7; --muted: #8d8b85; --line: #34332f; --btn: #22211f; }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 15px/1.5 ui-monospace, "SF Mono", Menlo, monospace;
+    display: flex; justify-content: center; padding: 48px 16px;
+  }
+  main { width: 100%; max-width: 420px; }
+  h1 { font-size: 15px; font-weight: 600; margin: 0 0 4px; }
+  p { color: var(--muted); margin: 0 0 28px; font-size: 13px; }
+  label { display: block; color: var(--muted); font-size: 12px; margin-bottom: 6px; }
+  select, input {
+    width: 100%; font: inherit; color: var(--fg); background: var(--btn);
+    border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; margin-bottom: 20px;
+  }
+  .row { display: flex; gap: 8px; }
+  button {
+    flex: 1; font: inherit; color: var(--fg); background: var(--btn);
+    border: 1px solid var(--line); border-radius: 6px; padding: 10px; cursor: pointer;
+  }
+  button:hover { border-color: var(--muted); }
+  button:disabled { opacity: .4; cursor: default; }
+  #status { margin-top: 24px; font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 8px; }
+  #dot { width: 8px; height: 8px; border-radius: 50%; background: var(--line); }
+  #dot.on { background: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <h1>clock send</h1>
+  <p>Sends MIDI clock, start, continue and stop to a MIDI output. Open in Chrome.</p>
+
+  <label for="out">output</label>
+  <select id="out"><option>waiting for MIDI access…</option></select>
+
+  <label for="bpm">bpm</label>
+  <input id="bpm" type="number" min="20" max="300" value="120">
+
+  <div class="row">
+    <button id="start">start</button>
+    <button id="cont">continue</button>
+    <button id="stop" disabled>stop</button>
+  </div>
+
+  <div id="status"><span id="dot"></span><span id="msg">stopped</span></div>
+</main>
+<script>
+const CLK = 0xF8, START = 0xFA, CONT = 0xFB, STOP = 0xFC;
+const $ = id => document.getElementById(id);
+let midi = null, out = null, timer = null, next = 0, beat = 0;
+
+function bpm() { return Math.min(300, Math.max(20, Number($('bpm').value) || 120)); }
+
+// schedule pulses a little ahead with timestamps, so timer jitter
+// doesn't show up in the clock
+function schedule() {
+  const period = 60000 / bpm() / 24;
+  const horizon = performance.now() + 60;
+  while (next < horizon) {
+    out.send([CLK], next);
+    next += period;
+    if (++beat % 24 === 0) blink();
+  }
+}
+
+function blink() {
+  const d = $('dot');
+  d.classList.add('on');
+  setTimeout(() => d.classList.remove('on'), 60);
+}
+
+function run(first) {
+  if (!out || timer) return;
+  out.send([first]);
+  next = performance.now() + 1;
+  beat = 0;
+  timer = setInterval(schedule, 20);
+  schedule();
+  $('stop').disabled = false;
+  $('start').disabled = $('cont').disabled = true;
+  $('msg').textContent = (first === START ? 'started' : 'continued') + ' at ' + bpm() + ' bpm';
+}
+
+function stop() {
+  if (!timer) return;
+  clearInterval(timer); timer = null;
+  out.send([STOP], next);  // after the last pulse already queued
+  $('stop').disabled = true;
+  $('start').disabled = $('cont').disabled = false;
+  $('msg').textContent = 'stopped';
+}
+
+function pick() {
+  stop();
+  out = midi && midi.outputs.get($('out').value) || null;
+}
+
+function list() {
+  const sel = $('out'), prev = sel.value;
+  sel.innerHTML = '';
+  for (const o of midi.outputs.values()) sel.add(new Option(o.name, o.id));
+  if (!sel.options.length) sel.add(new Option('no MIDI outputs found', ''));
+  if ([...sel.options].some(o => o.value === prev)) sel.value = prev;
+  else {
+    const grid = [...sel.options].find(o => /monome|grid|iii/i.test(o.text));
+    if (grid) sel.value = grid.value;
+  }
+  pick();
+}
+
+$('start').onclick = () => run(START);
+$('cont').onclick = () => run(CONT);
+$('stop').onclick = stop;
+$('out').onchange = pick;
+$('bpm').onchange = () => { if (timer) $('msg').textContent = 'running at ' + bpm() + ' bpm'; };
+
+if (!navigator.requestMIDIAccess) {
+  $('out').innerHTML = '<option>this browser has no Web MIDI, use Chrome</option>';
+} else {
+  navigator.requestMIDIAccess().then(m => {
+    midi = m;
+    midi.onstatechange = list;
+    list();
+  }, () => { $('out').innerHTML = '<option>MIDI access was denied</option>'; });
+}
+</script>
+</body>
+</html>
