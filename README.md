@@ -33,7 +33,7 @@ Older grids with an FTDI chip can't run iii or send USB-MIDI themselves. They ca
  6 │                                               │
  7 │                                               │  root
    ├───────────────────────────────────────────────┤
- 8 │ P1 P2 P3 P4   LN    CL    SV LD GL RS T- T+ ▶ │
+ 8 │ P1 P2 P3 P4   LN    CL    PR    GL RS T- T+ ▶ │
    └───────────────────────────────────────────────┘
 ```
 
@@ -50,8 +50,7 @@ Each active playhead is shown as a lit column. Notes it is currently on light up
 | 1–4 | P1–P4 | Tap to mute or unmute that playhead. Hold to open its edit page. |
 | 6 | LN | Hold, then press any column in rows 1–7 to set the loop length. |
 | 8 | CL | While holding LN, press to clear the pattern. |
-| 10 | SV | Save the pattern, settings and tempo. |
-| 11 | LD | Load what was saved. |
+| 10 | PR | Hold to open the preset page. |
 | 12 | GL | Hold to open the global settings page. |
 | 13 | RS | Reset all playheads to the start. |
 | 14 / 15 | T- / T+ | Tempo down / up by 5 BPM. Dimmed and inactive when following external clock. |
@@ -81,6 +80,20 @@ Transposition is in scale degrees, not semitones, so a transposed playhead stays
 | P3 | 2× | forward | +1 | 0 | 3 | muted |
 | P4 | ¾× | ping-pong | 0 | +2 | 4 | muted |
 
+### Preset page
+
+Hold key 10 in row 8 and the top of the grid shows eight preset slots in row 1. Each slot stores the pattern, loop length, playhead settings, scale, root, velocity, clock mode and tempo. Release key 10 to go back to the pattern.
+
+Empty slots are dim, saved slots medium, and the last one loaded or saved bright.
+
+| Action | Result |
+|---|---|
+| Tap a saved slot | Load it. |
+| Tap an empty slot | Save the current state there straight away. |
+| Hold a saved slot for 1.5 seconds | Overwrite it. Row 2 fills up while you hold; let go before it is full to cancel. |
+
+A tap on a saved slot only ever loads, so a stray press can't overwrite anything. Loading replaces whatever is on the grid, so save first if you want to keep it. Whatever was in the old single save slot is now slot 1.
+
 ### Global page
 
 Hold key 12 in row 8 and the top of the grid shows settings that apply to every playhead. Release the key to go back to the pattern.
@@ -93,7 +106,7 @@ Hold key 12 in row 8 and the top of the grid shows settings that apply to every 
 | 4 | Velocity | 1–16 | 8 to 127, in steps of 8 |
 | 5 | Clock | 1–3 | internal, internal and send MIDI clock, or follow external MIDI clock |
 
-Changing the scale, root note or octave sends note-offs for anything sounding first, so no notes get stuck. These settings are saved and loaded with SV and LD.
+Changing the scale, root note or octave sends note-offs for anything sounding first, so no notes get stuck. These settings are stored in presets.
 
 ### Clock
 
@@ -126,7 +139,7 @@ With key 2 in row 5 of the global page lit, the grid sends MIDI clock (24 pulses
 | ▶ after a reset, or at startup | start |
 | ▶ resuming where it stopped | continue |
 | ▶ to stop | stop |
-| RS, or LD, while playing | start, since the playheads are back at step 1 |
+| RS, or loading a preset, while playing | start, since the playheads are back at step 1 |
 
 Turning clock out on while playing sends continue, so followers pick up the tempo straight away. They won't know where in the pattern the fugue is until the next start, so press RS to line them up. Turning it off while playing sends stop.
 
