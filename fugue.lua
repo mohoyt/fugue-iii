@@ -7,7 +7,7 @@
 --   1-4  tap = mute/unmute playhead, hold = edit that playhead
 --   6    hold + press a column in rows 1-7 = set pattern length
 --   6+8  hold 6 and press 8 = clear pattern
---   10   save (pset 1)      11  load (pset 1)
+--   10   hold = preset page (8 slots)
 --   12   hold = global settings page
 --   13   reset playheads    14  tempo -5    15  tempo +5
 --   16   play / stop
@@ -19,6 +19,11 @@
 --   row 4  transpose  cols 1-16: scale degrees -7 .. +8 (col 8 = 0)
 --   row 5  midi ch    cols 1-16
 --   row 6  gate       cols 1-8 : 1/8 .. 8/8 of the step
+--
+-- preset page (while holding 10):
+--   row 1  slots 1-8 : tap = load, tap an empty slot = save,
+--                      hold ~1.5s on a filled slot = overwrite it
+--   row 2  fills up while holding to show the overwrite is coming
 --
 -- global page (while holding 12):
 --   row 1  scale      cols 1-8 : maj min dor phr lyd mix loc harm-min
@@ -75,6 +80,7 @@ end
 
 playing   = true
 held_glob = false
+held_pre  = false
 held_head = nil
 held_time = 0
 edited    = false
@@ -83,6 +89,15 @@ dirty     = true
 
 math.randomseed(math.floor(get_time() * 1000000))
 pset_init("fugue")
+
+NSLOT  = 8     -- preset slots
+TAP    = 0.5   -- release sooner than this = tap (load)
+HOLD   = 1.5   -- hold this long on a filled slot to overwrite it
+slot   = nil   -- slot key currently held
+slot_t = 0
+slot_done = false
+cur_slot  = nil
+filled = {}
 
 -- ===== helpers =====
 local function clampn(n, lo, hi)
@@ -299,7 +314,15 @@ local function set_clock(c)
 end
 
 -- ===== save / load =====
-local function save()
+local function scan_slots()
+  for i=1,NSLOT do
+    local ok, t = pcall(pset_read, i)
+    filled[i] = (ok and t and t.p) and true or false
+  end
+end
+scan_slots()
+
+local function save(n)
   local t = {len=len, bpm=BPM, root=ROOT, vel=VEL, scale=scale_i,
              clk=CLOCK, p={}, h={}}
   for x=1,W do
@@ -309,13 +332,15 @@ local function save()
     local v = {h.speed, h.dir, h.oct, h.deg, h.ch, h.gate, h.on and 1 or 0}
     for _, n in ipairs(v) do t.h[#t.h+1] = n end
   end
-  pset_write(1, t)
-  print("saved")
+  local ok = pcall(pset_write, n, t)
+  if ok then filled[n] = true; cur_slot = n; print("saved " .. n)
+  else print("save failed") end
 end
 
-local function load()
-  local t = pset_read(1)
+local function load(n)
+  local t = pset_read(n)
   if not t or not t.p then print("nothing saved"); return end
+  cur_slot = n
   release_all()
   len = t.len or 16
   BPM = t.bpm or BPM
@@ -335,7 +360,7 @@ local function load()
   end
   set_tempo()
   reset_all()
-  print("loaded")
+  print("loaded " .. n)
 end
 
 -- ===== drawing =====
@@ -347,8 +372,7 @@ local function draw_controls()
   end
   grid_led(6, 8, len_held and 15 or 4)
   if len_held then grid_led(8, 8, 6) end
-  grid_led(10, 8, 3)
-  grid_led(11, 8, 3)
+  grid_led(10, 8, held_pre and 15 or 3)
   grid_led(12, 8, held_glob and 15 or 3)
   grid_led(13, 8, 3)
   local tb = CLOCK == 3 and 1 or 3  -- tempo keys do nothing on external clock
@@ -386,6 +410,25 @@ end
 
 local BLACK = {[2]=true, [4]=true, [7]=true, [9]=true, [11]=true}
 
+local function draw_presets()
+  for x=1,NSLOT do
+    local b = filled[x] and 6 or 2
+    if x == cur_slot then b = 10 end
+    if x == slot then b = 15 end
+    grid_led(x, 1, b)
+  end
+  if slot then
+    -- overwrite countdown, then a full row once it has happened
+    local n = NSLOT
+    if not slot_done then
+      n = math.floor(NSLOT * (get_time() - slot_t) / HOLD)
+    end
+    if filled[slot] or slot_done then
+      for x=1,math.min(n, NSLOT) do grid_led(x, 2, slot_done and 15 or 8) end
+    end
+  end
+end
+
 local function draw_global()
   for x=1,8 do grid_led(x, 1, x == scale_i and 15 or 3) end
   local pc, oct = ROOT % 12, math.floor(ROOT / 12) - 1
@@ -398,7 +441,8 @@ end
 
 function redraw()
   grid_led_all(0)
-  if held_glob then draw_global()
+  if held_pre then draw_presets()
+  elseif held_glob then draw_global()
   elseif held_head then draw_edit(heads[held_head])
   else draw_pattern() end
   draw_controls()
@@ -434,14 +478,36 @@ local function edit_global(x, y)
 end
 
 function event_grid(x, y, z)
+  if held_pre and y < 8 then
+    -- preset page: slots are in row 1, everything else is ignored
+    if y == 1 and x <= NSLOT then
+      if z == 1 and not slot then
+        slot = x; slot_t = get_time(); slot_done = false
+        if not filled[x] then save(x); slot_done = true end
+      elseif z == 0 and slot == x then
+        if not slot_done and get_time() - slot_t < TAP then load(x) end
+        slot = nil
+      end
+    end
+    dirty = true
+    return
+  end
   if y == 8 then
-    if x == 12 then
+    if x == 10 then
+      if z == 1 and held_glob then
+        -- global page is up, leave it alone
+      else
+        held_pre = (z == 1)
+        if held_pre then edited = true else slot = nil end
+      end
+    elseif x == 12 then
+      if z == 1 and held_pre then return end
       held_glob = (z == 1)
       -- a playhead key still held underneath shouldn't count as a tap
       if held_glob then edited = true end
     elseif x <= 4 then
-      if z == 1 and held_glob then
-        -- ignore new playhead presses while the global page is up
+      if z == 1 and (held_glob or held_pre) then
+        -- ignore new playhead presses while a page is up
       elseif z == 1 then
         held_head = x; held_time = get_time(); edited = false
       elseif held_head == x then
@@ -458,8 +524,6 @@ function event_grid(x, y, z)
       if x == 8 and len_held then
         for cx=1,W do for cy=1,ROWS do pat[cx][cy] = false end end
         release_all()
-      elseif x == 10 then save()
-      elseif x == 11 then load()
       elseif x == 13 then reset_all()
       elseif x == 14 and CLOCK ~= 3 then BPM = math.max(20, BPM - 5); set_tempo()
       elseif x == 15 and CLOCK ~= 3 then BPM = math.min(300, BPM + 5); set_tempo()
@@ -495,7 +559,13 @@ end
 
 -- ===== go =====
 -- display refresh runs on its own timer at ~30 fps, separate from the clock
-disp = metro.init(function() if dirty then redraw() end end, 1/30)
+disp = metro.init(function()
+  -- holding a filled slot to overwrite it: save once the hold completes
+  if slot and not slot_done and get_time() - slot_t >= HOLD then
+    save(slot); slot_done = true; dirty = true
+  end
+  if dirty or slot then redraw() end
+end, 1/30)
 disp:start()
 
 if CLOCK == 3 then playing = false end  -- wait for the external start
